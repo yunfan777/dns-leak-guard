@@ -592,6 +592,59 @@ def render_proxy_audit_section(pa: dict) -> str:
     return "\n".join(out)
 
 
+def render_claude_guard_section(cg: dict) -> str:
+    out = [render_section_header("9. Claude 全链路防风控分流一致性审计 (14 域名 + 34.8.0.0/16)")]
+    verdict = cg.get("verdict", "WARNING")
+    bg = C.BG_GREEN if verdict == "SAFE" else (C.BG_YELLOW if verdict == "WARNING" else C.BG_RED)
+    mode_str = f"白盒规则直审 ({cg['whitebox_client']})" if cg.get("whitebox_client") else "黑盒 DNS + CF Trace 模式"
+    base_str = cg.get("baseline_policy") or cg.get("baseline_exit_ip") or "-"
+    out.append(
+        f"  风控评级 : {bg} {cg.get('verdict_label', '-')} {C.RESET}   "
+        f"一致性评分: {C.BOLD}{cg.get('score', 0)}/100{C.RESET}   "
+        f"基准出口: {C.CYAN}{base_str}{C.RESET}"
+    )
+    out.append(
+        f"  审计模式 : {C.DIM}{mode_str} · 一致: {cg.get('consistent_count', 0)}/{cg.get('total_count', 0)} · "
+        f"直连泄漏: {cg.get('direct_leak_count', 0)} · 出口漂移: {cg.get('split_drift_count', 0)}{C.RESET}"
+    )
+
+    rows = []
+    for t in cg.get("targets", []):
+        st = t.get("status", "INFO")
+        if st == "CONSISTENT":
+            st_str = f"{C.GREEN}✔ {t['status_label']}{C.RESET}"
+        elif st == "SPLIT_DRIFT":
+            st_str = f"{C.YELLOW}▲ {t['status_label']}{C.RESET}"
+        elif st in ("DIRECT_LEAK", "REGION_BLOCKED"):
+            st_str = f"{C.RED}✖ {t['status_label']}{C.RESET}"
+        else:
+            st_str = f"{C.DIM}ℹ {t['status_label']}{C.RESET}"
+
+        exit_col = t.get("final_policy") or (
+            f"{t['cf_exit_ip']} ({t['cf_exit_cc']})" if t.get("cf_exit_ip") else t.get("dns_status", "-")
+        )
+        rows.append([
+            t["target"],
+            t["role"],
+            exit_col,
+            st_str,
+            t.get("note", ""),
+        ])
+
+    out.append(
+        render_table(
+            ["域名 / IP 段", "关联用途", "实际命中出口 / DNS", "一致性判定", "风险说明"],
+            rows,
+            [30, 18, 28, 16, 38],
+            ["left", "left", "left", "left", "left"],
+        )
+    )
+    findings_txt = render_findings(cg.get("findings", []))
+    if findings_txt:
+        out.append("\n" + findings_txt)
+    return "\n".join(out)
+
+
 def render_dig_result(res: dict) -> str:
     out = [render_section_header(f"DNS 报文自定义探测 ({res['protocol']} -> {res['server']})")]
     out.append(f"  查询域名 : {C.BOLD}{res['domain']}{C.RESET}  |  记录类型: {res['qtype']}  |  状态码: {res['rcode']}  |  耗时: {res['latency_ms']}ms")
@@ -640,6 +693,8 @@ def render_full_audit_report(audit: dict) -> str:
     parts.append(render_benchmark_section(audit["benchmark"]))
     if audit.get("ai"):
         parts.append(render_ai_section(audit["ai"]))
+    if audit.get("claude_guard"):
+        parts.append(render_claude_guard_section(audit["claude_guard"]))
     if audit.get("proxy_audit") and audit["proxy_audit"].get("client_detected"):
         parts.append(render_proxy_audit_section(audit["proxy_audit"]))
 

@@ -659,6 +659,63 @@ function renderAIPanel(ai) {
   renderFindings("ai-findings", ai.findings);
 }
 
+function renderClaudeGuardPanel(cg) {
+  if (!cg) return;
+  const chipsEl = document.getElementById("claude-summary-chips");
+  if (chipsEl) {
+    const baseExit = cg.baseline_policy || cg.baseline_exit_ip || "-";
+    chipsEl.innerHTML = `
+      <div class="highlight-chip">一致性评分: <strong>${cg.score ?? 0}/100</strong></div>
+      <div class="highlight-chip">基准出口: <strong style="color:var(--cyan)">${esc(baseExit)}</strong></div>
+      <div class="highlight-chip">一致项: <strong style="color:var(--green)">${cg.consistent_count ?? 0}/${cg.total_count ?? 0}</strong></div>
+      <div class="highlight-chip">直连泄漏: <strong style="color:var(--red)">${cg.direct_leak_count ?? 0}</strong></div>
+      <div class="highlight-chip">出口漂移: <strong style="color:var(--yellow)">${cg.split_drift_count ?? 0}</strong></div>
+    `;
+  }
+  const tbody = document.getElementById("tbody-claude-guard");
+  const targets = cg.targets || [];
+  if (tbody) {
+    if (targets.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">暂无 Claude 全链路审计数据</td></tr>`;
+    } else {
+      tbody.innerHTML = targets
+        .map((t) => {
+          let badge = `<span class="tag tag-muted">${esc(t.status_label)}</span>`;
+          if (t.status === "CONSISTENT") badge = `<span class="tag tag-green">${esc(t.status_label)}</span>`;
+          else if (t.status === "SPLIT_DRIFT") badge = `<span class="tag tag-yellow">${esc(t.status_label)}</span>`;
+          else if (t.status === "DIRECT_LEAK" || t.status === "REGION_BLOCKED")
+            badge = `<span class="tag tag-red">${esc(t.status_label)}</span>`;
+          const exitCol =
+            t.final_policy ||
+            (t.cf_exit_ip ? `${t.cf_exit_ip} (${t.cf_exit_cc || "-"})` : t.dns_status || "-");
+          return `
+            <tr>
+              <td class="mono"><strong>${esc(t.target)}</strong></td>
+              <td>${esc(t.role)}</td>
+              <td class="mono">${esc(exitCol)}</td>
+              <td>${badge}</td>
+              <td class="muted">${esc(t.note)}</td>
+            </tr>`;
+        })
+        .join("");
+    }
+  }
+  renderFindings("claude-findings", cg.findings);
+}
+
+async function copyClaudeRules(fmt) {
+  try {
+    const resp = await fetch(`/api/claude/rules?format=${encodeURIComponent(fmt)}&policy=Claude`);
+    const data = await resp.json();
+    if (navigator.clipboard && data.rules) {
+      await navigator.clipboard.writeText(data.rules);
+      setScanState(false, `已复制 ${fmt.toUpperCase()} 版 Claude 14+1 统一分流规则`);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
 async function runAllDiagnostics() {
   setScanState(true, "并发执行 6 项深度安全与 AI 解锁审计...");
   try {
@@ -676,6 +733,7 @@ async function runAllDiagnostics() {
     renderLeakPanel(audit.leak);
     renderSplitPanel(audit.split);
     renderAIPanel(audit.ai);
+    renderClaudeGuardPanel(audit.claude_guard);
     renderWebRTCPanel(audit.webrtc);
     renderPollutionPanel(audit.pollution);
     renderBenchmarkPanel(audit.benchmark);
@@ -695,6 +753,7 @@ async function runSingleModule(mod) {
     if (mod === "leak") renderLeakPanel(data);
     else if (mod === "split") renderSplitPanel(data);
     else if (mod === "ai") renderAIPanel(data);
+    else if (mod === "claude") renderClaudeGuardPanel(data);
     else if (mod === "webrtc") renderWebRTCPanel(data);
     else if (mod === "pollute") renderPollutionPanel(data);
     else if (mod === "bench") renderBenchmarkPanel(data);

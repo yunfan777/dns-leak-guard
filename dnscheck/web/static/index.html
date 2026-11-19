@@ -18,7 +18,7 @@
         </svg>
       </div>
       <div>
-        <h1>DNSGuard <span class="version-pill">v1.2</span></h1>
+        <h1>DNSGuard <span class="version-pill">v1.3</span></h1>
         <p class="subtitle">系统底层 Socket + 浏览器原生双模 DNS 泄漏安全审计台</p>
       </div>
     </div>
@@ -238,6 +238,36 @@
           </table>
         </div>
         <div id="ai-findings" class="findings-box mt-16"></div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="section-title-row">
+          <h3>Claude 全链路防风控分流一致性审计 (14 伴生域名 + 34.8.0.0/16)</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-secondary" onclick="copyClaudeRules('surge')">复制 Surge 规则</button>
+            <button class="btn btn-sm btn-secondary" onclick="copyClaudeRules('clash')">复制 Clash 规则</button>
+            <button class="btn btn-sm btn-secondary" onclick="runSingleModule('claude')">重测 Claude 全链路</button>
+          </div>
+        </div>
+        <p class="muted small-desc">校验 Claude 主站、Artifacts/MCP、Intercom 客服、Datadog/Sentry 遥测、Stripe 支付与 Sift 反欺诈是否全部落入同一固定出口，杜绝双 IP 关联封号。</p>
+        <div id="claude-summary-chips" class="bench-highlights"></div>
+        <div class="table-wrap mt-12">
+          <table>
+            <thead>
+              <tr>
+                <th>域名 / IP 段</th>
+                <th>关联用途</th>
+                <th>实际命中出口 / DNS</th>
+                <th>一致性判定</th>
+                <th>风控说明</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-claude-guard">
+              <tr><td colspan="5" class="empty-cell">请点击「一键全量诊断」或「重测 Claude 全链路」</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="claude-findings" class="findings-box mt-16"></div>
       </div>
     </section>
 

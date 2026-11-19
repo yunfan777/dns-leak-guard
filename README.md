@@ -60,8 +60,9 @@ sequenceDiagram
    - Parses `/etc/resolv.conf`, macOS `scutil --dns` / `scutil --proxy`, scans `utun*` / `tun*` / `wg*` virtual interfaces, and detects **Fake-IP (`198.18.0.0/15`)** and **EDNS Client Subnet (ECS)** exposure.
 4. **Split-Routing & Multi-Egress Matrix (`split`)**
    - Concurrently compares domestic direct egress, global egress, Cloudflare Anycast (`colo`), and IPv6 egress to detect split-routing mode and **IPv6 bypass leaks**.
-5. **AI Services Connectivity & Region Lock Audit (`ai`)**
-   - Tests OpenAI (`chatgpt.com`, `api.openai.com`), Claude, Gemini, Grok, Perplexity, GitHub Copilot, Cursor, OpenRouter, Groq, HuggingFace, plus domestic baselines (DeepSeek / Kimi) for DNS mode, per-domain exit region, geo-blocks, and Cloudflare challenges.
+5. **AI Services Connectivity & Claude Full-Chain Anti-Fraud Consistency Audit (`ai` / `claude`)**
+   - Tests OpenAI, Claude, Gemini, Grok, Perplexity, GitHub Copilot, Cursor, OpenRouter, Groq, HuggingFace, plus DeepSeek / Kimi for DNS mode, per-domain exit region, geo-blocks, and Cloudflare challenges.
+   - **Claude 14 Domains + `34.8.0.0/16` Consistency Guard (`dnscheck claude`)**: audits all companion domains (`claude.ai`, `anthropic.com`, `claude.com`, `claudeusercontent.com`, `claude.app`, `claudemcpcontent.com`, `clau.de`, `api-iam.intercom.io`, `nexus-websocket-a.intercom.io`, `us5.datadoghq.com`, `r.stripe.com`, `us.sentry.io`, `siftscience.com`, `fcmtoken.googleapis.com`, and `34.8.0.0/16`) to catch `DIRECT` leaks or exit-node drift that trigger multi-IP risk control, with built-in rule export (`--export surge|clash|shadowrocket`).
 6. **WebRTC / STUN UDP & IPv6 Leak Detection (`webrtc`)**
    - Pure-Python **RFC 5389 STUN Binding Request** (`XOR-MAPPED-ADDRESS`) paired with browser-native `RTCPeerConnection` ICE candidate auditing in the Web UI.
 7. **DNS Pollution Audit & Multi-Protocol Benchmark (`pollute` / `bench`)**
@@ -95,6 +96,8 @@ python3 dnscheck.py leak --oast-server your-oast.example.com --oast-token YOUR_T
 
 # Run individual diagnostic modules
 python3 dnscheck.py audit
+python3 dnscheck.py claude
+python3 dnscheck.py claude --export surge --policy "Claude"
 python3 dnscheck.py env
 python3 dnscheck.py split
 python3 dnscheck.py ai

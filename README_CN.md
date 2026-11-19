@@ -60,8 +60,9 @@ sequenceDiagram
    - 自动解析 `/etc/resolv.conf`、macOS `scutil --dns` / `scutil --proxy`、扫描 `utun*` / `tun*` / `wg*` 虚拟网卡，自动识别代理内核、**Fake-IP (`198.18.0.0/15`)** 与 **ECS** 状态。
 4. **国内外网络分流与多出口 IP 对比 (`split`)**
    - 并发对比国内直连、海外通用、Cloudflare Anycast (`colo`) 与 IPv6 双栈出口，识别分流模式与 **IPv6 旁路泄漏**。
-5. **一线 AI 服务连通性、分流与锁区检测 (`ai`)**
-   - 并发检测 OpenAI (`chatgpt.com`, `api.openai.com`)、Claude、Gemini、Grok、Perplexity、Copilot、Cursor、OpenRouter、Groq、HuggingFace 与国内基准 DeepSeek / Kimi，判断 DNS 模式、出口地区、锁区限制与 Cloudflare 风控盾。
+5. **一线 AI 服务连通性 & Claude 全链路防风控分流一致性审计 (`ai` / `claude`)**
+   - 并发检测 OpenAI、Claude、Gemini、Grok、Perplexity、Copilot、Cursor、OpenRouter、Groq、HuggingFace 与 DeepSeek / Kimi 的 DNS 模式、出口地区、锁区限制与 Cloudflare 风控盾。
+   - **Claude 14 伴生域名 + `34.8.0.0/16` 一致性体检 (`dnscheck claude`)**：逐项审计主站、Artifacts/MCP、Intercom 客服、Datadog/Sentry 遥测、Stripe 支付、Sift 反欺诈、FCM 与 `34.8.0.0/16` 是否全部指向同一固定出口（揪出直连泄漏与节点漂移），并支持一键导出规则（`--export surge|clash|shadowrocket`）。
 6. **WebRTC / STUN UDP 穿透与 IPv6 泄漏检测 (`webrtc`)**
    - 原生实现 **RFC 5389 STUN Binding Request**（`XOR-MAPPED-ADDRESS` 解码），Web 控制台同步执行浏览器 `RTCPeerConnection` ICE 候选交叉对比。
 7. **DNS 污染/投毒检测 & UDP / DoT / DoH 多协议测速 (`pollute` / `bench`)**
@@ -95,6 +96,8 @@ python3 dnscheck.py leak --oast-server your-oast.example.com --oast-token YOUR_T
 
 # 运行其余单项模块
 python3 dnscheck.py audit
+python3 dnscheck.py claude
+python3 dnscheck.py claude --export surge --policy "Claude"
 python3 dnscheck.py env
 python3 dnscheck.py split
 python3 dnscheck.py ai

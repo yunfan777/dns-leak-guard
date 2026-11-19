@@ -13,7 +13,9 @@ from typing import List, Optional
 from dnscheck import __version__
 from dnscheck.cli import renderer
 from dnscheck.detectors import (
+    generate_claude_rules,
     run_ai_services_diagnostics,
+    run_claude_split_audit,
     run_custom_dig,
     run_dns_benchmark,
     run_dns_leak_detection,
@@ -102,6 +104,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = subparsers.add_parser("audit", help="本机代理客户端配置与规则求值只读体检 (支持 Surge CLI rule explain)")
     _add_json_flags(p_audit)
 
+    # 10. claude (Claude 14 domains + 34.8.0.0/16 anti-fraud split consistency audit & rule export)
+    p_claude = subparsers.add_parser(
+        "claude",
+        help="Claude 全链路防风控分流一致性审计 (14 伴生域名 + 34.8.0.0/16) 与规则导出",
+    )
+    p_claude.add_argument(
+        "--export",
+        choices=["surge", "clash", "mihomo", "shadowrocket"],
+        default=None,
+        help="直接导出指定客户端格式的 Claude 14 域名 + 34.8.0.0/16 统一分流规则",
+    )
+    p_claude.add_argument(
+        "--policy",
+        default="Claude",
+        help="配合 --export 使用的目标固定出口策略组/节点名 (默认 Claude)",
+    )
+    _add_json_flags(p_claude)
+
     # 8. dig
     p_dig = subparsers.add_parser("dig", help="自定义 DNS 报文探测器 (支持 UDP/TCP/DoT/DoH 及 ECS)")
     p_dig.add_argument("domain", help="要查询的目标域名")
@@ -166,6 +186,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not as_json:
             print(renderer.render_banner())
             print(renderer.render_proxy_audit_section(rep))
+        return 0
+
+    if cmd == "claude":
+        if args.export:
+            print(generate_claude_rules(fmt=args.export, policy=args.policy))
+            return 0
+        if not as_json:
+            print("正在审计 Claude 全链路 14 个关联域名与 34.8.0.0/16 出口一致性...", file=sys.stderr)
+        rep = run_claude_split_audit().to_dict()
+        if as_json or out_file:
+            _write_json_output(rep, out_file, as_json)
+        if not as_json:
+            print(renderer.render_banner())
+            print(renderer.render_claude_guard_section(rep))
         return 0
 
     if cmd == "env":

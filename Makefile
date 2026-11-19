@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help check leak audit env split webrtc pollute bench ai ui app test clean
+.PHONY: help check leak audit claude env split webrtc pollute bench ai ui app test clean
 
 help:
 	@echo "DNSGuard (dnscheck) 快捷命令:"
@@ -9,6 +9,7 @@ help:
 	@echo "  make app      - 以独立桌面应用窗口模式启动可视化面板"
 	@echo "  make leak     - 仅运行 Interactsh OAST 多通道 DNS 泄漏与劫持检测"
 	@echo "  make audit    - 仅运行本机代理配置与规则求值只读审计 (支持 Surge CLI)"
+	@echo "  make claude   - 仅运行 Claude 全链路防风控分流一致性审计 (14 域名 + 34.8.0.0/16)"
 	@echo "  make env      - 仅运行本机系统 DNS / TUN / Fake-IP / ECS 诊断"
 	@echo "  make split    - 仅运行国内外网络分流与多出口对比"
 	@echo "  make ai       - 仅运行一线 AI 服务连通性与锁区检测 (OpenAI/Claude/Gemini等)"
@@ -25,6 +26,9 @@ leak:
 
 audit:
 	$(PYTHON) dnscheck.py audit
+
+claude:
+	$(PYTHON) dnscheck.py claude
 
 env:
 	$(PYTHON) dnscheck.py env

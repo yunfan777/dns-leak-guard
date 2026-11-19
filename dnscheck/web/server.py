@@ -17,11 +17,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from dnscheck import __version__
 from dnscheck.detectors import (
+    generate_claude_rules,
     run_ai_services_diagnostics,
+    run_claude_split_audit,
     run_custom_dig,
     run_dns_benchmark,
     run_dns_leak_detection,
@@ -126,6 +128,13 @@ class DNSCheckRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(run_ai_services_diagnostics(split_report=split_rep).to_dict())
             elif path == "/api/run/audit":
                 self._send_json(run_proxy_config_audit().to_dict())
+            elif path == "/api/run/claude":
+                self._send_json(run_claude_split_audit().to_dict())
+            elif path == "/api/claude/rules":
+                qs = parse_qs(parsed.query)
+                fmt = (qs.get("format", ["surge"])[0] or "surge").strip()
+                pol = (qs.get("policy", ["Claude"])[0] or "Claude").strip()
+                self._send_json({"format": fmt, "policy": pol, "rules": generate_claude_rules(fmt=fmt, policy=pol)})
             else:
                 self._serve_static(path)
         except Exception as exc:

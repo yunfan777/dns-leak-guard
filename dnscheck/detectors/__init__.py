@@ -11,6 +11,11 @@ from datetime import datetime
 from typing import Optional
 
 from dnscheck.detectors.ai_services import AIServicesReport, run_ai_services_diagnostics
+from dnscheck.detectors.claude_guard import (
+    ClaudeSplitAuditReport,
+    generate_claude_rules,
+    run_claude_split_audit,
+)
 from dnscheck.detectors.dns_leak import DNSLeakReport, run_dns_leak_detection
 from dnscheck.detectors.pollution_bench import (
     BenchmarkReport,
@@ -42,6 +47,9 @@ __all__ = [
     "run_dns_benchmark",
     "AIServicesReport",
     "run_ai_services_diagnostics",
+    "ClaudeSplitAuditReport",
+    "generate_claude_rules",
+    "run_claude_split_audit",
     "ProxyAuditReport",
     "run_proxy_config_audit",
     "run_full_audit",
@@ -68,19 +76,21 @@ def run_full_audit(
         split_report: SplitRouteReport = f_split.result()
         proxy_audit: ProxyAuditReport = f_paudit.result()
 
-    # Phase 2: Deep DNS Leak (OAST), WebRTC/STUN, Pollution Detection, Benchmark, and AI Services
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    # Phase 2: Deep DNS Leak (OAST), WebRTC/STUN, Pollution Detection, Benchmark, AI & Claude Chain Audit
+    with ThreadPoolExecutor(max_workers=6) as pool:
         f_leak = pool.submit(run_dns_leak_detection, split_report, 6, oast_server, oast_token)
         f_rtc = pool.submit(run_webrtc_ipv6_diagnostics, split_report)
         f_pol = pool.submit(run_pollution_detection)
         f_bench = pool.submit(run_dns_benchmark, 2)
         f_ai = pool.submit(run_ai_services_diagnostics, split_report)
+        f_claude = pool.submit(run_claude_split_audit)
 
         leak_report: DNSLeakReport = f_leak.result()
         rtc_report: WebRTCLeakReport = f_rtc.result()
         pol_report: PollutionReport = f_pol.result()
         bench_report: BenchmarkReport = f_bench.result()
         ai_report: AIServicesReport = f_ai.result()
+        claude_report: ClaudeSplitAuditReport = f_claude.result()
 
     # Compute overall composite security score (0-100)
     score = leak_report.risk_score
@@ -155,6 +165,10 @@ def run_full_audit(
             f"当前测速最快的加密 DNS 为 {fe.name} ({fe.avg_ms:.1f}ms)，建议优先选用。"
         )
 
+    if claude_report.direct_leak_count > 0 or claude_report.split_drift_count > 0:
+        recommendations.append(
+            f"Claude 全链路存在 {claude_report.direct_leak_count} 项直连泄漏与 {claude_report.split_drift_count} 项节点漂移（涉及客服/支付/反欺诈/遥测域名），建议执行 `dnscheck claude --export surge` 统一 14 域名 + 34.8.0.0/16 出口。"
+        )
     if proxy_audit.client_detected and proxy_audit.rule_explain and proxy_audit.rule_explain.triggered_local_dns:
         trig = proxy_audit.rule_explain.trigger_rule or "IP 规则"
         recommendations.insert(
@@ -179,6 +193,7 @@ def run_full_audit(
         "pollution": pol_report.to_dict(),
         "benchmark": bench_report.to_dict(),
         "ai": ai_report.to_dict(),
+        "claude_guard": claude_report.to_dict(),
     }
 
 
