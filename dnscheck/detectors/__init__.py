@@ -18,6 +18,7 @@ from dnscheck.detectors.pollution_bench import (
     run_dns_benchmark,
     run_pollution_detection,
 )
+from dnscheck.detectors.proxy_audit import ProxyAuditReport, run_proxy_config_audit
 from dnscheck.detectors.split_route import SplitRouteReport, run_split_route_diagnostics
 from dnscheck.detectors.system_env import SystemEnvReport, run_system_env_diagnostics
 from dnscheck.detectors.webrtc_ipv6 import WebRTCLeakReport, run_webrtc_ipv6_diagnostics
@@ -41,6 +42,8 @@ __all__ = [
     "run_dns_benchmark",
     "AIServicesReport",
     "run_ai_services_diagnostics",
+    "ProxyAuditReport",
+    "run_proxy_config_audit",
     "run_full_audit",
     "run_custom_dig",
 ]
@@ -56,12 +59,14 @@ def run_full_audit(
     """
     t0 = time.perf_counter()
 
-    # Phase 1: System Env & Split-Routing (fast, needed as context for Leak & WebRTC)
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    # Phase 1: System Env, Split-Routing & Read-Only Proxy Rule Audit (fast, needed as context)
+    with ThreadPoolExecutor(max_workers=3) as pool:
         f_env = pool.submit(run_system_env_diagnostics)
         f_split = pool.submit(run_split_route_diagnostics)
+        f_paudit = pool.submit(run_proxy_config_audit)
         env_report: SystemEnvReport = f_env.result()
         split_report: SplitRouteReport = f_split.result()
+        proxy_audit: ProxyAuditReport = f_paudit.result()
 
     # Phase 2: Deep DNS Leak (OAST), WebRTC/STUN, Pollution Detection, Benchmark, and AI Services
     with ThreadPoolExecutor(max_workers=5) as pool:
@@ -150,6 +155,13 @@ def run_full_audit(
             f"当前测速最快的加密 DNS 为 {fe.name} ({fe.avg_ms:.1f}ms)，建议优先选用。"
         )
 
+    if proxy_audit.client_detected and proxy_audit.rule_explain and proxy_audit.rule_explain.triggered_local_dns:
+        trig = proxy_audit.rule_explain.trigger_rule or "IP 规则"
+        recommendations.insert(
+            0,
+            f"检测到 {proxy_audit.client_name} 配置 `{proxy_audit.active_profile}` 命中 `{trig}` 触发本地 DNS 预解析，请为该规则及所有 IP/GEOIP 规则补齐 `,no-resolve`。",
+        )
+
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
     return {
@@ -160,6 +172,7 @@ def run_full_audit(
         "overall_verdict_label": verdict_label,
         "recommendations": recommendations,
         "env": env_report.to_dict(),
+        "proxy_audit": proxy_audit.to_dict(),
         "split": split_report.to_dict(),
         "leak": leak_report.to_dict(),
         "webrtc": rtc_report.to_dict(),

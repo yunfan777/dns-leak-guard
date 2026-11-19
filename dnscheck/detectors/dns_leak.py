@@ -126,6 +126,7 @@ class TransparentHijackProbe:
     returned_resolver_ip: Optional[str] = None
     chaos_id: Optional[str] = None
     hijacked: bool = False
+    proxy_hijacked: bool = False
     reason: str = ""
     latency_ms: float = 0.0
     intel: Optional[IPIntel] = None
@@ -139,6 +140,7 @@ class TransparentHijackProbe:
             "returned_resolver_ip": self.returned_resolver_ip,
             "chaos_id": self.chaos_id,
             "hijacked": self.hijacked,
+            "proxy_hijacked": self.proxy_hijacked,
             "reason": self.reason,
             "latency_ms": round(self.latency_ms, 2),
             "intel": self.intel.to_dict() if self.intel else None,
@@ -281,19 +283,25 @@ def _trigger_oast_vectors(
         answers: List[str] = []
         faked = False
         try:
-            infos = socket.getaddrinfo(sub, 443, socket.AF_INET, socket.SOCK_STREAM)
+            infos = socket.getaddrinfo(sub, 80, socket.AF_INET, socket.SOCK_STREAM)
             for info in infos:
                 ip = info[4][0]
                 if ip not in answers:
                     answers.append(ip)
             faked = any(is_fake_ip(ip) for ip in answers)
-            # Bypass HTTP_PROXY / scutil --proxy to test non-proxy-aware CLI/native apps
+            # Bypass HTTP_PROXY / scutil --proxy to test non-proxy-aware CLI/native apps.
+            # Try port-80 HTTP first (zero TLS handshake RTT, triggers HTTP Host sniffing immediately).
             ctx = ssl._create_unverified_context()
             https_handler = urllib.request.HTTPSHandler(context=ctx)
             no_proxy_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), https_handler)
-            req = urllib.request.Request(f"https://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
-            with no_proxy_opener.open(req, timeout=2.4) as resp:
-                resp.read(64)
+            try:
+                req = urllib.request.Request(f"http://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
+                with no_proxy_opener.open(req, timeout=2.2) as resp:
+                    resp.read(64)
+            except Exception:
+                req_tls = urllib.request.Request(f"https://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
+                with no_proxy_opener.open(req_tls, timeout=2.0) as resp:
+                    resp.read(64)
         except Exception:
             pass
         elapsed = (time.perf_counter() - t0) * 1000.0
@@ -302,13 +310,20 @@ def _trigger_oast_vectors(
     def _run_proxy_sni() -> Tuple[str, Tuple[str, List[str], bool, float]]:
         sub = subdomains["proxy-sni"]
         t0 = time.perf_counter()
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(f"https://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
+        # Try fast HTTP port-80 first to avoid slow TLS handshake overhead on high-latency proxies,
+        # falling back to HTTPS TLS SNI if port 80 is blocked or fails.
         try:
-            with urllib.request.urlopen(req, timeout=2.6, context=ctx) as resp:
+            req = urllib.request.Request(f"http://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
+            with urllib.request.urlopen(req, timeout=2.2) as resp:
                 resp.read(64)
         except Exception:
-            pass
+            try:
+                ctx = ssl._create_unverified_context()
+                req_tls = urllib.request.Request(f"https://{sub}/", headers={"User-Agent": "Interactsh-Client/1.2"})
+                with urllib.request.urlopen(req_tls, timeout=2.2, context=ctx) as resp:
+                    resp.read(64)
+            except Exception:
+                pass
         elapsed = (time.perf_counter() - t0) * 1000.0
         return "proxy-sni", (sub, [], False, elapsed)
 
@@ -327,7 +342,7 @@ def _run_oast_audit_flow(
     oast_token: Optional[str] = None,
 ) -> Tuple[Optional[InteractshSession], Dict[str, Tuple[str, List[str], bool, float]], List[InteractshInteraction]]:
     """
-    Register fastest OAST node -> fire 6 concurrent vectors -> two-stage low-latency poll -> async cleanup.
+    Register fastest OAST node -> fire 6 concurrent vectors -> adaptive low-latency poll -> async cleanup.
     """
     session = register_fastest_oast_session(custom_server=oast_server, token=oast_token, timeout=4.5)
     if session is None:
@@ -337,19 +352,19 @@ def _run_oast_audit_flow(
         vector_meta = _trigger_oast_vectors(session, primary_sys_dns=primary_sys_dns)
         collected: List[InteractshInteraction] = []
 
-        # Stage 1 fast poll (~300ms settle)
-        time.sleep(0.30)
-        try:
-            collected.extend(session.poll(timeout=3.5))
-        except Exception:
-            pass
-
-        # Stage 2 straggler poll (~500ms settle to catch slower fallback/concurrent race packets)
-        time.sleep(0.50)
-        try:
-            collected.extend(session.poll(timeout=3.5))
-        except Exception:
-            pass
+        # Adaptive 3-stage poll: exits early after stage 2 if connection vectors already reported back.
+        for idx, delay in enumerate((0.30, 0.50, 0.70)):
+            time.sleep(delay)
+            try:
+                batch = session.poll(timeout=3.5)
+                if batch:
+                    collected.extend(batch)
+            except Exception:
+                pass
+            if idx >= 1:
+                seen_tags = {ev.tag for ev in collected if ev.protocol == "dns"}
+                if "proxy-sni" in seen_tags and ("direct-sni" in seen_tags or "udp-sys" in seen_tags):
+                    break
 
         return session, vector_meta, collected
     finally:
@@ -482,14 +497,33 @@ def _probe_authoritative_echo_dns(server_ip: str) -> List[Tuple[str, Optional[st
     return found
 
 
+def _detect_local_proxy_udp53_hijack(target_server: str, timeout: float = 1.0) -> Optional[str]:
+    """
+    Send a Fake-IP canary A query to target_server:53.
+    If the response returns a Fake-IP (198.18.0.0/15), UDP-53 is being intercepted by
+    the local proxy's dns-hijack / hijack-dns engine (NOT an ISP attack).
+    Returns the Fake-IP string if intercepted locally, else None.
+    """
+    canary = f"dnscheck-canary-{uuid.uuid4().hex[:8]}.invalid"
+    res = query_udp(target_server, canary, qtype=TYPE_A, timeout=timeout)
+    if res.success and res.answers:
+        for ans in res.answers:
+            ip_val = _extract_valid_ip(ans)
+            if ip_val and is_fake_ip(ip_val):
+                return ip_val
+    return None
+
+
 def check_transparent_udp53_hijack(timeout: float = 2.2) -> List[TransparentHijackProbe]:
     """
     Send raw UDP-53 queries directly to 8.8.8.8 and 1.1.1.1 to check whether
-    the local network or ISP transparently intercepts port 53 traffic.
+    the local network or ISP transparently intercepts port 53 traffic, while
+    distinguishing local proxy dns-hijack (Fake-IP canary) from ISP hijacking.
     """
     probes: List[TransparentHijackProbe] = []
 
     def _probe_google() -> TransparentHijackProbe:
+        proxy_fake_ip = _detect_local_proxy_udp53_hijack("8.8.8.8", timeout=1.0)
         res_g = query_udp("8.8.8.8", "o-o.myaddr.l.google.com", qtype=TYPE_TXT, timeout=timeout)
         returned_ip: Optional[str] = None
         latency = res_g.latency_ms
@@ -507,7 +541,33 @@ def check_transparent_udp53_hijack(timeout: float = 2.2) -> List[TransparentHija
             latency = res_ak.latency_ms
             domain_used = "whoami.akamai.net"
             if res_ak.success and res_ak.answers:
-                returned_ip = _extract_valid_ip(res_ak.answers[0])
+                cand = _extract_valid_ip(res_ak.answers[0])
+                if cand and is_fake_ip(cand):
+                    proxy_fake_ip = proxy_fake_ip or cand
+                else:
+                    returned_ip = cand
+
+        if proxy_fake_ip:
+            intel = enrich_ip(returned_ip, timeout=2.2) if returned_ip else None
+            if intel and intel.is_cn:
+                reason = (
+                    f"本机代理 dns-hijack 已接管 8.8.8.8:53（非运营商劫持），"
+                    f"但其内部 DNS 将 TXT 转给了国内上游 {intel.display_isp} ({returned_ip})"
+                )
+            else:
+                reason = f"本机代理 (TUN/VIF) 开启了 dns-hijack，已拦截 8.8.8.8:53 ({proxy_fake_ip}，非运营商劫持)"
+            return TransparentHijackProbe(
+                target_server="8.8.8.8:53",
+                target_name="Google Public DNS (UDP 53)",
+                probe_domain=domain_used,
+                success=True,
+                returned_resolver_ip=returned_ip or proxy_fake_ip,
+                hijacked=False,
+                proxy_hijacked=True,
+                reason=reason,
+                latency_ms=latency,
+                intel=intel,
+            )
 
         if not returned_ip:
             return TransparentHijackProbe(
@@ -545,12 +605,32 @@ def check_transparent_udp53_hijack(timeout: float = 2.2) -> List[TransparentHija
         )
 
     def _probe_cloudflare() -> TransparentHijackProbe:
+        proxy_fake_ip = _detect_local_proxy_udp53_hijack("1.1.1.1", timeout=1.0)
         res_ch = query_udp("1.1.1.1", "whoami.cloudflare", qtype=TYPE_TXT, qclass=CLASS_CH, timeout=timeout)
         chaos_id = res_ch.answers[0].strip('"') if (res_ch.success and res_ch.answers) else None
 
         res_ak = query_udp("1.1.1.1", "whoami.akamai.net", qtype=TYPE_A, timeout=timeout)
-        returned_ip = _extract_valid_ip(res_ak.answers[0]) if (res_ak.success and res_ak.answers) else None
+        cand_ip = _extract_valid_ip(res_ak.answers[0]) if (res_ak.success and res_ak.answers) else None
+        if cand_ip and is_fake_ip(cand_ip):
+            proxy_fake_ip = proxy_fake_ip or cand_ip
+            returned_ip = None
+        else:
+            returned_ip = cand_ip
         latency = res_ak.latency_ms if res_ak.success else res_ch.latency_ms
+
+        if proxy_fake_ip:
+            return TransparentHijackProbe(
+                target_server="1.1.1.1:53",
+                target_name="Cloudflare DNS (UDP 53)",
+                probe_domain="whoami.akamai.net / whoami.cloudflare",
+                success=True,
+                returned_resolver_ip=returned_ip or proxy_fake_ip,
+                chaos_id=chaos_id,
+                hijacked=False,
+                proxy_hijacked=True,
+                reason=f"本机代理 (TUN/VIF) 开启了 dns-hijack，已拦截 1.1.1.1:53 ({proxy_fake_ip}，非运营商劫持)",
+                latency_ms=latency,
+            )
 
         if not returned_ip and not chaos_id:
             return TransparentHijackProbe(
@@ -725,6 +805,26 @@ def evaluate_oast_vectors(
     direct_bypass_leak = False
 
     if proxy_active:
+        # Surge / Fake-IP nuance: if BOTH real connection vectors (direct-sni & proxy-sni)
+        # are 100% pure overseas with 0 CN hits, and ONLY raw non-A/AAAA TXT (udp-sys)
+        # hit a domestic resolver without concurrent race, downgrade udp-sys from hard LEAK
+        # to INFO (standard Surge deadlock-free local DoH behavior for TXT queries).
+        p_direct = probe_by_id.get("direct-sni")
+        p_proxy = probe_by_id.get("proxy-sni")
+        p_udp = probe_by_id.get("udp-sys")
+        both_conn_clean_overseas = bool(
+            p_proxy
+            and p_proxy.overseas_ips
+            and not p_proxy.cn_ips
+            and p_direct
+            and p_direct.overseas_ips
+            and not p_direct.cn_ips
+        )
+        if both_conn_clean_overseas and p_udp and p_udp.cn_ips and not p_udp.overseas_ips:
+            p_udp.status = "INFO"
+            p_udp.status_label = "本地 TXT 分流"
+            p_udp.note = "浏览/连接均 100% 走海外远端解析，仅裸 TXT 查询由本地直连 DNS 应答 (Surge 标准防死锁模式)"
+
         # 1. Concurrent fallback race: any single overseas OAST probe hit BOTH CN and Overseas resolvers
         concurrent_race_leak = any(bool(p.cn_ips and p.overseas_ips) for p in probes_out)
 
@@ -734,7 +834,6 @@ def evaluate_oast_vectors(
             qtype65_leak = True
 
         # 3. Direct / OS stub bypass leak: proxy-sni is clean overseas, yet sys-v4/sys-v6/direct-sni leaked to CN
-        p_proxy = probe_by_id.get("proxy-sni")
         proxy_clean = bool(p_proxy and p_proxy.overseas_ips and not p_proxy.cn_ips)
         os_cn = any(
             bool(probe_by_id.get(k) and probe_by_id[k].cn_ips)
@@ -896,13 +995,22 @@ def run_dns_leak_detection(
     findings: List[dict] = []
 
     if oast_enabled:
-        findings.append(
-            {
-                "level": "info",
-                "title": f"Interactsh OAST 权威带外抓包已就绪 ({oast_srv_name} · 握手 {oast_reg_ms:.0f}ms)",
-                "detail": f"共并发投递 {len(OAST_VECTOR_SPECS)} 组带标签子域探针，权威 NS 实时捕获 {len(dns_oast_events)} 个原始 DNS 查询报文。",
-            }
-        )
+        if len(dns_oast_events) > 0:
+            findings.append(
+                {
+                    "level": "info",
+                    "title": f"Interactsh OAST 权威带外抓包已就绪 ({oast_srv_name} · 握手 {oast_reg_ms:.0f}ms)",
+                    "detail": f"共并发投递 {len(OAST_VECTOR_SPECS)} 组带标签子域探针，权威 NS 实时捕获 {len(dns_oast_events)} 个原始 DNS 查询报文。",
+                }
+            )
+        else:
+            findings.append(
+                {
+                    "level": "warning",
+                    "title": f"Interactsh OAST ({oast_srv_name}) 握手成功但未收到 DNS 回调报文",
+                    "detail": "可能是当前代理节点连接超时、或出口屏蔽了 OAST 测试域名；已自动结合 EDNS 反射与权威回显结果进行综合判定（不会误报 OAST 满分通过）。",
+                }
+            )
 
     if transparent_hijack:
         score -= 35
@@ -976,9 +1084,13 @@ def run_dns_leak_detection(
             leak_status = "WARNING"
             leak_status_label = "局部通道泄漏 (Channel Bypass Leak)"
         elif cn_resolvers and overseas_resolvers:
-            # Verify whether OAST overseas domain itself stayed clean (meaning CN resolver only came from direct sys_dns echo!)
-            oast_cn_any = any(bool(p.cn_ips) for p in vector_probes)
-            if oast_enabled and not oast_cn_any:
+            # Strict OAST verification gate: must actually capture >= 1 real overseas hit on OAST
+            # AND have 0 real connection-vector CN hits (ignoring clean Surge TXT-only INFO nuance).
+            oast_overseas_any = any(bool(p.overseas_ips) for p in vector_probes)
+            oast_real_leak_any = any(
+                bool(p.cn_ips) and p.status in ("LEAK", "WARNING") for p in vector_probes
+            )
+            if oast_enabled and len(dns_oast_events) > 0 and oast_overseas_any and not oast_real_leak_any:
                 leak_status = "SAFE" if not transparent_hijack else "WARNING"
                 leak_status_label = (
                     "安全分流无泄漏 (OAST 权威验证通过)" if leak_status == "SAFE" else "存在透明劫持风险"
@@ -986,9 +1098,9 @@ def run_dns_leak_detection(
                 findings.append(
                     {
                         "level": "ok",
-                        "title": "OAST 逐包验证通过：未知海外域名未触发任何国内 DNS 泄漏",
+                        "title": "OAST 逐包验证通过：未知海外域名连接均 100% 走海外远端解析无泄漏",
                         "detail": (
-                            f"虽然本机保留了国内直连 DNS 用于国内分流，但针对未入库海外域名的全部 {len(OAST_VECTOR_SPECS)} 项探测均未泄露至国内解析器。"
+                            f"权威服务器实收 {len(dns_oast_events)} 个原始报文，所有海外连接探针 (Direct/Proxy/Fake-IP) 均未泄露至国内解析器。"
                         ),
                     }
                 )
@@ -1002,7 +1114,7 @@ def run_dns_leak_detection(
                         "title": "检测到国内外混合递归 DNS 解析",
                         "detail": (
                             f"共发现 {len(overseas_resolvers)} 个海外 DNS 节点与 {len(cn_resolvers)} 个国内 DNS 节点。"
-                            "建议核查 nameserver-policy 是否对未知海外域名启用了国内并发解析。"
+                            "建议核查代理规则 IP 类条目是否漏加 no-resolve，或 nameserver-policy 是否对未知海外域名启用了国内并发解析。"
                         ),
                     }
                 )
@@ -1048,17 +1160,20 @@ def run_dns_leak_detection(
             leak_status_label = "探测受限 (No Resolvers Found)"
             score -= 20
 
-    # Check if ECS exposed a domestic subnet while overseas proxy is active
-    if proxy_active and ecs_leaked_subnets:
-        for sub in ecs_leaked_subnets:
-            sub_ip = sub.split("/")[0].strip("[]")
+    # Check if an OVERSEAS resolver exposed a domestic subnet via ECS while proxy is active
+    # (Domestic resolvers like AliDNS attaching CN ECS for domestic CDN optimization is normal.)
+    if proxy_active:
+        for r in overseas_resolvers:
+            if not r.ecs_seen:
+                continue
+            sub_ip = r.ecs_seen.split("/")[0].strip("[]")
             sub_intel = enrich_ip(sub_ip)
             if sub_intel.is_cn:
                 score -= 10
                 findings.append(
                     {
                         "level": "warning",
-                        "title": f"EDNS Client Subnet (ECS) 暴露国内子网: {sub}",
+                        "title": f"海外 DNS ({r.ip}) 通过 ECS 暴露国内子网: {r.ecs_seen}",
                         "detail": "即使请求经过海外递归 DNS，ECS 扩展字段仍向权威服务器附带了您的国内 IP 前缀，可能泄露真实地理位置。",
                     }
                 )

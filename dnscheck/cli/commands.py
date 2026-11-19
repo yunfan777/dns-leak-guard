@@ -19,6 +19,7 @@ from dnscheck.detectors import (
     run_dns_leak_detection,
     run_full_audit,
     run_pollution_detection,
+    run_proxy_config_audit,
     run_split_route_diagnostics,
     run_system_env_diagnostics,
     run_webrtc_ipv6_diagnostics,
@@ -97,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ai = subparsers.add_parser("ai", help="一线 AI 服务 (OpenAI / Claude / Gemini / Grok / DeepSeek 等) 连通性与锁区检测")
     _add_json_flags(p_ai)
 
+    # 9. audit (read-only Surge/Proxy rule & DNS config audit)
+    p_audit = subparsers.add_parser("audit", help="本机代理客户端配置与规则求值只读体检 (支持 Surge CLI rule explain)")
+    _add_json_flags(p_audit)
+
     # 8. dig
     p_dig = subparsers.add_parser("dig", help="自定义 DNS 报文探测器 (支持 UDP/TCP/DoT/DoH 及 ECS)")
     p_dig.add_argument("domain", help="要查询的目标域名")
@@ -150,6 +155,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not as_json:
             print(renderer.render_banner())
             print(renderer.render_ai_section(rep))
+        return 0
+
+    if cmd == "audit":
+        if not as_json:
+            print("正在执行本机代理配置与规则求值只读审计 (不读取代理密码或订阅链接)...", file=sys.stderr)
+        rep = run_proxy_config_audit().to_dict()
+        if as_json or out_file:
+            _write_json_output(rep, out_file, as_json)
+        if not as_json:
+            print(renderer.render_banner())
+            print(renderer.render_proxy_audit_section(rep))
         return 0
 
     if cmd == "env":

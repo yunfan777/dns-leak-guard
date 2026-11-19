@@ -1,13 +1,14 @@
 PYTHON ?= python3
 
-.PHONY: help check leak env split webrtc pollute bench ai ui app test clean
+.PHONY: help check leak audit env split webrtc pollute bench ai ui app test clean
 
 help:
 	@echo "DNSGuard (dnscheck) 快捷命令:"
-	@echo "  make check    - 运行全套 6 合 1 DNS 安全与 AI 解锁深度诊断 (CLI)"
+	@echo "  make check    - 运行全套 DNS 安全、OAST 泄漏、代理审计与 AI 解锁诊断 (CLI)"
 	@echo "  make ui       - 启动本地 Web 可视化诊断控制台 (默认 127.0.0.1:8765)"
 	@echo "  make app      - 以独立桌面应用窗口模式启动可视化面板"
-	@echo "  make leak     - 仅运行 DNS 泄漏与透明劫持检测"
+	@echo "  make leak     - 仅运行 Interactsh OAST 多通道 DNS 泄漏与劫持检测"
+	@echo "  make audit    - 仅运行本机代理配置与规则求值只读审计 (支持 Surge CLI)"
 	@echo "  make env      - 仅运行本机系统 DNS / TUN / Fake-IP / ECS 诊断"
 	@echo "  make split    - 仅运行国内外网络分流与多出口对比"
 	@echo "  make ai       - 仅运行一线 AI 服务连通性与锁区检测 (OpenAI/Claude/Gemini等)"
@@ -21,6 +22,9 @@ check:
 
 leak:
 	$(PYTHON) dnscheck.py leak
+
+audit:
+	$(PYTHON) dnscheck.py audit
 
 env:
 	$(PYTHON) dnscheck.py env

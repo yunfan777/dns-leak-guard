@@ -52,19 +52,21 @@ sequenceDiagram
 
 1. **Interactsh OAST 带外权威抓包 & 透明劫持审计 (`leak`)**
    - 纯标准库实现 `RSA-OAEP-SHA256`、`AES-256-CTR` / `AES-256-CFB128` 解密与多节点并发竞速握手，支持 `--oast-server` / `--oast-token` 对接自建或 PDCP 节点，受限时自动降级至 `bash.ws` 会话备援。
-   - **6 维通道带外归因矩阵**：精准区分 `sys-v4`、`sys-v6`、`Type 65 (HTTPS)` 穿透、`TXT` 真实上游竞速、绕过系统代理直连 (`direct-sni`) 与代理嗅探出站 (`proxy-sni`)。
-   - 联动 Akamai 双栈 `whoami.ds.akahelp.net` (`TXT` 含 ECS)、Google TXT、CloudFront A 及直连 `8.8.8.8:53` / `1.1.1.1:53` 探针，输出 **0–100 安全评分**。
-2. **本机系统 DNS 环境诊断 (`env`)**
+   - **6 维通道带外归因矩阵**：精准区分 `sys-v4`、`sys-v6`、`Type 65 (HTTPS)` 穿透、`TXT` 真实上游竞速（内置 Surge 无死锁 `TXT` 分流语义识别）、绕过系统代理直连 (`direct-sni`) 与代理嗅探出站 (`proxy-sni`)，并强制校验 OAST 真实回包，杜绝零回包假绿。
+   - **Fake-IP 金丝雀 UDP-53 劫持区分**：联动 Akamai 双栈 `whoami.ds.akahelp.net` (`TXT`)、Google TXT、CloudFront A 及 `8.8.8.8:53` / `1.1.1.1:53`，通过 Fake-IP 金丝雀精准区分「本机代理 `dns-hijack` 接管」与「运营商透明劫持」，并仅对海外递归节点暴露国内子网触发 ECS 告警。
+2. **本机代理配置与规则求值只读审计 (`audit`)**
+   - 自动检测运行中的 **Surge for Mac (`surge-cli`)**，对冷门金丝雀域名执行 dry-run `rule explain`，直接揪出触发本地 DNS 预解析的元凶规则（如前置 `RULE-SET,LAN` 或 `GEOIP,CN` 漏加 `,no-resolve`）及耗时开销——全程只读且绝不解析/输出任何节点密码或订阅链接。
+3. **本机系统 DNS 环境诊断 (`env`)**
    - 自动解析 `/etc/resolv.conf`、macOS `scutil --dns` / `scutil --proxy`、扫描 `utun*` / `tun*` / `wg*` 虚拟网卡，自动识别代理内核、**Fake-IP (`198.18.0.0/15`)** 与 **ECS** 状态。
-3. **国内外网络分流与多出口 IP 对比 (`split`)**
+4. **国内外网络分流与多出口 IP 对比 (`split`)**
    - 并发对比国内直连、海外通用、Cloudflare Anycast (`colo`) 与 IPv6 双栈出口，识别分流模式与 **IPv6 旁路泄漏**。
-4. **一线 AI 服务连通性、分流与锁区检测 (`ai`)**
+5. **一线 AI 服务连通性、分流与锁区检测 (`ai`)**
    - 并发检测 OpenAI (`chatgpt.com`, `api.openai.com`)、Claude、Gemini、Grok、Perplexity、Copilot、Cursor、OpenRouter、Groq、HuggingFace 与国内基准 DeepSeek / Kimi，判断 DNS 模式、出口地区、锁区限制与 Cloudflare 风控盾。
-5. **WebRTC / STUN UDP 穿透与 IPv6 泄漏检测 (`webrtc`)**
+6. **WebRTC / STUN UDP 穿透与 IPv6 泄漏检测 (`webrtc`)**
    - 原生实现 **RFC 5389 STUN Binding Request**（`XOR-MAPPED-ADDRESS` 解码），Web 控制台同步执行浏览器 `RTCPeerConnection` ICE 候选交叉对比。
-6. **DNS 污染/投毒检测 & UDP / DoT / DoH 多协议测速 (`pollute` / `bench`)**
+7. **DNS 污染/投毒检测 & UDP / DoT / DoH 多协议测速 (`pollute` / `bench`)**
    - 以可信 DoH 解析为基准比对明文 UDP-53，揪出黑洞 IP、跨品牌抢答投毒与 ASN 偏离；并发评测国内外主流解析器的 UDP / DoT (853) / DoH (443) 延迟与 DNSSEC (`AD`) 支持度。
-7. **自定义 DNS 报文探测器 (`dig`)**
+8. **自定义 DNS 报文探测器 (`dig`)**
    - 原生构造与解析 RFC 1035 / EDNS0 / ECS / RFC 9460 (`HTTPS` / `SVCB`) 报文，支持 `UDP / TCP / DoT / DoH / System` 任意切换。
 
 ---
@@ -92,6 +94,7 @@ python3 dnscheck.py leak --oast-server oast.pro
 python3 dnscheck.py leak --oast-server your-oast.example.com --oast-token YOUR_TOKEN
 
 # 运行其余单项模块
+python3 dnscheck.py audit
 python3 dnscheck.py env
 python3 dnscheck.py split
 python3 dnscheck.py ai

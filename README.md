@@ -52,19 +52,21 @@ sequenceDiagram
 
 1. **Interactsh OAST Out-of-Band Leak Attribution & UDP-53 Hijack Audit (`leak`)**
    - Zero-dependency `RSA-OAEP-SHA256` & `AES-256-CTR` / `AES-256-CFB128` OAST client with concurrent multi-server latency racing, optional `--oast-server` / `--oast-token` for self-hosted or PDCP servers, and automatic `bash.ws` fallback.
-   - **6-Vector Attribution Matrix**: isolates `sys-v4`, `sys-v6`, `qtype65` (RFC 9460 `HTTPS` bypass), `udp-sys` (`TXT` race probe), `direct-sni` (bypassing system HTTP proxy), and `proxy-sni` (Fake-IP SNI sniffing).
-   - Cross-verifies with Akamai Dual-Stack (`whoami.ds.akahelp.net` `TXT` with ECS), Google `TXT`, CloudFront `A`, and direct UDP-53 probes to `8.8.8.8` / `1.1.1.1`.
-2. **Local System DNS & Proxy Environment Diagnostics (`env`)**
+   - **6-Vector Attribution Matrix**: isolates `sys-v4`, `sys-v6`, `qtype65` (RFC 9460 `HTTPS` bypass), `udp-sys` (`TXT` race probe with Surge deadlock-free `TXT` nuance), `direct-sni` (bypassing system HTTP proxy), and `proxy-sni` (Fake-IP Host/SNI sniffing), with strict callback verification (never reports false-green on zero OAST callbacks).
+   - **Fake-IP Canary UDP-53 Audit**: cross-verifies Akamai Dual-Stack (`whoami.ds.akahelp.net` `TXT`), Google `TXT`, CloudFront `A`, and `8.8.8.8:53` / `1.1.1.1:53` while using a Fake-IP canary to distinguish local proxy `dns-hijack` from true ISP port-53 hijacking.
+2. **Read-Only Proxy Configuration & Rule Auditor (`audit`)**
+   - Automatically detects running **Surge for Mac (`surge-cli`)**, runs a dry-run `rule explain` on an unlisted canary domain to catch synchronous local DNS lookups (e.g., `RULE-SET,LAN,DIRECT` or `GEOIP,CN` missing `,no-resolve`) and measures exact latency overhead — strictly read-only, never reading or exposing proxy credentials or subscription URLs.
+3. **Local System DNS & Proxy Environment Diagnostics (`env`)**
    - Parses `/etc/resolv.conf`, macOS `scutil --dns` / `scutil --proxy`, scans `utun*` / `tun*` / `wg*` virtual interfaces, and detects **Fake-IP (`198.18.0.0/15`)** and **EDNS Client Subnet (ECS)** exposure.
-3. **Split-Routing & Multi-Egress Matrix (`split`)**
+4. **Split-Routing & Multi-Egress Matrix (`split`)**
    - Concurrently compares domestic direct egress, global egress, Cloudflare Anycast (`colo`), and IPv6 egress to detect split-routing mode and **IPv6 bypass leaks**.
-4. **AI Services Connectivity & Region Lock Audit (`ai`)**
+5. **AI Services Connectivity & Region Lock Audit (`ai`)**
    - Tests OpenAI (`chatgpt.com`, `api.openai.com`), Claude, Gemini, Grok, Perplexity, GitHub Copilot, Cursor, OpenRouter, Groq, HuggingFace, plus domestic baselines (DeepSeek / Kimi) for DNS mode, per-domain exit region, geo-blocks, and Cloudflare challenges.
-5. **WebRTC / STUN UDP & IPv6 Leak Detection (`webrtc`)**
+6. **WebRTC / STUN UDP & IPv6 Leak Detection (`webrtc`)**
    - Pure-Python **RFC 5389 STUN Binding Request** (`XOR-MAPPED-ADDRESS`) paired with browser-native `RTCPeerConnection` ICE candidate auditing in the Web UI.
-6. **DNS Pollution Audit & Multi-Protocol Benchmark (`pollute` / `bench`)**
+7. **DNS Pollution Audit & Multi-Protocol Benchmark (`pollute` / `bench`)**
    - Compares plaintext UDP-53 responses against trusted DoH baselines to detect blackhole / forged IPs and ASN deviations; benchmarks UDP, DoT (853), and DoH (443) latency, availability, and DNSSEC (`AD`) support.
-7. **Custom DNS Packet Inspector (`dig`)**
+8. **Custom DNS Packet Inspector (`dig`)**
    - Native RFC 1035 / EDNS0 / ECS / RFC 9460 (`HTTPS` / `SVCB`) packet builder supporting `UDP / TCP / DoT / DoH / System`.
 
 ---
@@ -92,6 +94,7 @@ python3 dnscheck.py leak --oast-server oast.pro
 python3 dnscheck.py leak --oast-server your-oast.example.com --oast-token YOUR_TOKEN
 
 # Run individual diagnostic modules
+python3 dnscheck.py audit
 python3 dnscheck.py env
 python3 dnscheck.py split
 python3 dnscheck.py ai

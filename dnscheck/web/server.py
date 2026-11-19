@@ -27,6 +27,7 @@ from dnscheck.detectors import (
     run_dns_leak_detection,
     run_full_audit,
     run_pollution_detection,
+    run_proxy_config_audit,
     run_split_route_diagnostics,
     run_system_env_diagnostics,
     run_webrtc_ipv6_diagnostics,
@@ -123,6 +124,8 @@ class DNSCheckRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/run/ai":
                 split_rep = run_split_route_diagnostics()
                 self._send_json(run_ai_services_diagnostics(split_report=split_rep).to_dict())
+            elif path == "/api/run/audit":
+                self._send_json(run_proxy_config_audit().to_dict())
             else:
                 self._serve_static(path)
         except Exception as exc:

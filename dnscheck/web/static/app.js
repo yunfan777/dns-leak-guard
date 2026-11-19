@@ -205,6 +205,8 @@ function renderLeakPanel(leak) {
       const intel = h.intel || {};
       const statusTag = !h.success
         ? `<span class="tag tag-muted">超时/丢弃</span>`
+        : h.proxy_hijacked
+        ? `<span class="tag tag-cyan">本机代理接管</span>`
         : h.hijacked
         ? `<span class="tag tag-red">被透明劫持</span>`
         : `<span class="tag tag-green">正常直连/转发</span>`;
@@ -361,7 +363,7 @@ function renderBenchmarkPanel(bench) {
     .join("");
 }
 
-function renderEnvPanel(env) {
+function renderEnvPanel(env, proxyAudit) {
   const box = document.getElementById("env-details-box");
   const dnsList = (env.configured_dns_details || [])
     .map((d) => `${d.ip} (${d.location || "-"} · ${d.display_isp || "-"})`)
@@ -380,10 +382,18 @@ function renderEnvPanel(env) {
     )
     .join("");
 
+  const proxySummary =
+    proxyAudit && proxyAudit.client_detected
+      ? `<div class="env-kv"><span class="muted">客户端规则直审</span><span><strong style="color:var(--green)">${esc(
+          proxyAudit.client_version || proxyAudit.client_name
+        )}</strong> · 配置 ${esc(proxyAudit.active_profile || "-")} (${proxyAudit.audit_score}/100)</span></div>`
+      : "";
+
   box.innerHTML = `
     <div class="env-kv-grid">
       <div class="env-kv"><span class="muted">操作系统</span><span>${esc(env.os_name)}</span></div>
       <div class="env-kv"><span class="muted">工作模式</span><strong style="color:var(--cyan)">${esc(env.dns_mode)}</strong></div>
+      ${proxySummary}
       <div class="env-kv"><span class="muted">系统主 DNS</span><span class="mono" style="text-align:right">${dnsList || "未检测到"}</span></div>
       <div class="env-kv"><span class="muted">TUN 虚拟网卡</span><span class="mono" style="text-align:right">${tunList || "未检测到活跃 TUN 网卡"}</span></div>
       <div class="env-kv"><span class="muted">EDNS Client Subnet</span><span>${env.ecs_supported ? esc(env.ecs_subnet) : "未暴露"}</span></div>
@@ -395,7 +405,11 @@ function renderEnvPanel(env) {
       </table>
     </div>
   `;
-  renderFindings("env-findings", env.findings);
+  const combinedFindings = [
+    ...(env.findings || []),
+    ...(proxyAudit && proxyAudit.client_detected ? proxyAudit.findings || [] : []),
+  ];
+  renderFindings("env-findings", combinedFindings);
 }
 
 // Browser-Side DNS Leak Probe (Cross-verifies Browser HTTP DNS vs System CLI DNS)
@@ -665,7 +679,7 @@ async function runAllDiagnostics() {
     renderWebRTCPanel(audit.webrtc);
     renderPollutionPanel(audit.pollution);
     renderBenchmarkPanel(audit.benchmark);
-    renderEnvPanel(audit.env);
+    renderEnvPanel(audit.env, audit.proxy_audit);
     setScanState(false, "全量审计完成");
   } catch (err) {
     console.error(err);

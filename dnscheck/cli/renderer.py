@@ -373,6 +373,9 @@ def render_leak_section(leak: dict) -> str:
         if not h["success"]:
             verdict = f"{C.DIM}超时未阻断{C.RESET}"
             ret = "-"
+        elif h.get("proxy_hijacked"):
+            verdict = f"{C.CYAN}◆ 代理接管{C.RESET}"
+            ret = h["returned_resolver_ip"] or "-"
         elif h["hijacked"]:
             verdict = f"{C.RED}✖ 被透明劫持{C.RESET}"
             ret = h["returned_resolver_ip"] or "-"
@@ -537,6 +540,58 @@ def render_ai_section(ai: dict) -> str:
     return "\n".join(out)
 
 
+def render_proxy_audit_section(pa: dict) -> str:
+    out = [render_section_header("8. 本机代理配置与规则求值只读审计 (Proxy Config Audit)")]
+    if not pa.get("client_detected"):
+        out.append(f"  检测状态 : {C.DIM}{pa.get('client_name', '未检测到支持的客户端')}{C.RESET}")
+        findings_txt = render_findings(pa.get("findings", []))
+        if findings_txt:
+            out.append("\n" + findings_txt)
+        return "\n".join(out)
+
+    ver = pa.get("client_version") or pa.get("client_name")
+    prof = pa.get("active_profile") or "-"
+    enh = "On" if pa.get("enhanced_mode") else "Off"
+    sysp = "On" if pa.get("system_proxy") else "Off"
+    out.append(
+        f"  代理客户端 : {C.CYAN}{C.BOLD}{ver}{C.RESET}   "
+        f"活跃配置: {C.WHITE}{prof}{C.RESET}   "
+        f"增强模式: {enh} · 系统代理: {sysp}   "
+        f"配置评分: {C.BOLD}{pa.get('audit_score', 100)}/100{C.RESET}"
+    )
+
+    re_obj = pa.get("rule_explain")
+    if re_obj and re_obj.get("success"):
+        dns_flag = (
+            f"{C.RED}✖ 触发本地 DNS ({re_obj.get('trigger_rule')}){C.RESET}"
+            if re_obj.get("triggered_local_dns")
+            else f"{C.GREEN}✔ 零本地 DNS 预解析{C.RESET}"
+        )
+        rows = [
+            [
+                re_obj.get("canary_domain", "-"),
+                re_obj.get("matched_rule", "-"),
+                re_obj.get("final_policy", "-"),
+                f"{re_obj.get('duration_ms', 0):.1f}ms",
+                dns_flag,
+            ]
+        ]
+        out.append("\n  " + f"{C.BOLD}未知海外域名规则求值实测 (Dry-Run Rule Explain):{C.RESET}")
+        out.append(
+            render_table(
+                ["探测金丝雀域名", "命中规则", "最终出站策略", "耗时", "本地 DNS 行为"],
+                rows,
+                [28, 24, 24, 10, 26],
+                ["left", "left", "left", "right", "left"],
+            )
+        )
+
+    findings_txt = render_findings(pa.get("findings", []))
+    if findings_txt:
+        out.append("\n" + findings_txt)
+    return "\n".join(out)
+
+
 def render_dig_result(res: dict) -> str:
     out = [render_section_header(f"DNS 报文自定义探测 ({res['protocol']} -> {res['server']})")]
     out.append(f"  查询域名 : {C.BOLD}{res['domain']}{C.RESET}  |  记录类型: {res['qtype']}  |  状态码: {res['rcode']}  |  耗时: {res['latency_ms']}ms")
@@ -585,6 +640,8 @@ def render_full_audit_report(audit: dict) -> str:
     parts.append(render_benchmark_section(audit["benchmark"]))
     if audit.get("ai"):
         parts.append(render_ai_section(audit["ai"]))
+    if audit.get("proxy_audit") and audit["proxy_audit"].get("client_detected"):
+        parts.append(render_proxy_audit_section(audit["proxy_audit"]))
 
     recs = audit.get("recommendations", [])
     if recs:
