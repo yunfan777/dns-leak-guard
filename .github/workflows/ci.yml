@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.11", "3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile check
+        run: python -m compileall -q dnscheck tests dnscheck.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Verify package install & CLI entry point
+        run: |
+          pip install --no-deps --no-build-isolation -e .
+          dnscheck --version
+          python -m dnscheck --help > /dev/null

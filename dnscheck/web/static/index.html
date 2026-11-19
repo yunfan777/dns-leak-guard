@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DNSGuard · DNS 泄漏深度诊断 & 安全审计控制台</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </div>
+      <div>
+        <h1>DNSGuard <span class="version-pill">v1.1</span></h1>
+        <p class="subtitle">系统底层 Socket + 浏览器原生双模 DNS 泄漏安全审计台</p>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <span id="scan-status-pill" class="status-pill status-idle">就绪</span>
+      <button id="btn-export-json" class="btn btn-secondary" disabled>导出 JSON 报告</button>
+      <button id="btn-run-all" class="btn btn-primary">
+        <span class="btn-spinner" id="btn-spinner"></span>
+        <span id="btn-run-text">一键全量诊断</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Hero Overview Banner -->
+    <section class="hero-grid">
+      <div class="card score-card">
+        <div class="score-ring-wrap">
+          <svg class="score-ring" viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="50" />
+            <circle class="ring-fg" id="score-ring-fg" cx="60" cy="60" r="50" />
+          </svg>
+          <div class="score-center">
+            <span id="overall-score-num">--</span>
+            <small>安全评分</small>
+          </div>
+        </div>
+        <div class="score-meta">
+          <div id="overall-verdict-badge" class="verdict-badge verdict-idle">等待扫描</div>
+          <p id="overall-verdict-desc" class="muted">点击右上角「一键全量诊断」，同步检测本机底层 DNS 链路、浏览器 WebRTC、分流出口与污染情况。</p>
+          <div id="scan-timing" class="tiny-meta"></div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="card kpi-card">
+          <div class="kpi-label">本机 DNS 架构模式</div>
+          <div class="kpi-value" id="kpi-dns-mode">-</div>
+          <div class="kpi-sub" id="kpi-dns-sub">尚未检测系统网卡与 Fake-IP</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="kpi-label">上游递归 DNS 节点</div>
+          <div class="kpi-value" id="kpi-resolvers">-</div>
+          <div class="kpi-sub" id="kpi-resolvers-sub">等待多轮随机域名探针</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="kpi-label">国内外分流路由</div>
+          <div class="kpi-value" id="kpi-routing">-</div>
+          <div class="kpi-sub" id="kpi-routing-sub">国内 / 海外 / CDN / IPv6 出口</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="kpi-label">WebRTC & IPv6 防护</div>
+          <div class="kpi-value" id="kpi-webrtc">-</div>
+          <div class="kpi-sub" id="kpi-webrtc-sub">系统 STUN + 浏览器 ICE 双校验</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Recommendations Box -->
+    <section id="recommendations-panel" class="card rec-panel hidden">
+      <div class="section-title-row">
+        <h3>安全发现与加固建议</h3>
+      </div>
+      <ul id="recommendations-list" class="rec-list"></ul>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-bar">
+      <button class="tab-btn active" data-tab="tab-leak">1. DNS 泄漏与劫持检测</button>
+      <button class="tab-btn" data-tab="tab-split">2. 国内外分流多出口</button>
+      <button class="tab-btn" data-tab="tab-ai">3. AI 服务解锁检测</button>
+      <button class="tab-btn" data-tab="tab-webrtc">4. WebRTC & IPv6 泄漏</button>
+      <button class="tab-btn" data-tab="tab-pollute">5. DNS 污染与加密测速</button>
+      <button class="tab-btn" data-tab="tab-env">6. 系统环境 & Dig 实验室</button>
+    </nav>
+
+    <!-- Tab 1: DNS Leak & Transparent Hijack -->
+    <section id="tab-leak" class="tab-content active">
+      <div class="card" style="margin-bottom: 16px;">
+        <div class="section-title-row">
+          <h3>Interactsh OAST 多维通道带外归因矩阵 (逐包权威抓包)</h3>
+          <span id="oast-engine-badge" class="tag tag-muted">等待连接 OAST 集群...</span>
+        </div>
+        <p class="muted small-desc">按不同系统调用与 DNS 记录类型 (含 Type 65 HTTPS 记录、并发抢答 TXT、绕过代理直连) 投递加密带外子域，精准定位泄漏根因。</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>探测通道</th>
+                <th>QType</th>
+                <th>权威捕获递归 IP / 本地拦截</th>
+                <th>状态判定</th>
+                <th>根因说明</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-oast-vectors">
+              <tr><td colspan="5" class="empty-cell">请运行全量诊断或单独重测</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title-row">
+            <h3>系统级上游递归 DNS 节点 (OAST + 权威回显汇总)</h3>
+            <button class="btn btn-sm btn-secondary" onclick="runSingleModule('leak')">单独重测</button>
+          </div>
+          <p class="muted small-desc">汇总 Interactsh OAST 权威抓包、Akamai 双栈 TXT (含 ECS)、Google TXT 与 CloudFront 回显捕获的全部递归出口。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>递归 DNS IP</th>
+                  <th>区域</th>
+                  <th>地理位置</th>
+                  <th>运营商 / ASN</th>
+                  <th>命中</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-sys-resolvers">
+                <tr><td colspan="5" class="empty-cell">请运行全量诊断或单独重测</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-title-row">
+            <h3>浏览器侧 DNS 泄漏交叉验证 (Browser Fetch)</h3>
+            <button class="btn btn-sm btn-secondary" onclick="runBrowserDnsProbe()">重测浏览器侧</button>
+          </div>
+          <p class="muted small-desc">直接在浏览器内发起随机域名查询。若仅开启系统 HTTP 代理而未开启 TUN，系统级可能泄漏但浏览器侧安全。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>浏览器侧递归 DNS IP</th>
+                  <th>区域</th>
+                  <th>地理位置</th>
+                  <th>运营商 / ASN</th>
+                  <th>来源</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-browser-resolvers">
+                <tr><td colspan="5" class="empty-cell">等待浏览器侧探测...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="section-title-row">
+          <h3>明文 UDP-53 透明劫持探测 (直连 8.8.8.8 / 1.1.1.1)</h3>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>探测目标</th>
+                <th>实际应答 IP / 节点</th>
+                <th>归属运营商</th>
+                <th>状态判定</th>
+                <th>详细说明</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-hijack">
+              <tr><td colspan="5" class="empty-cell">暂无数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="leak-findings" class="findings-box mt-16"></div>
+    </section>
+
+    <!-- Tab 2: Split Routing Matrix -->
+    <section id="tab-split" class="tab-content">
+      <div class="card">
+        <div class="section-title-row">
+          <h3>四维网络分流与多出口 IP 对比矩阵</h3>
+          <button class="btn btn-sm btn-secondary" onclick="runSingleModule('split')">刷新分流矩阵</button>
+        </div>
+        <div id="split-cards-grid" class="split-cards-grid">
+          <div class="empty-cell">请点击「一键全量诊断」或「刷新分流矩阵」</div>
+        </div>
+        <div id="split-findings" class="findings-box mt-16"></div>
+      </div>
+    </section>
+
+    <!-- Tab 3: First-Tier AI Services Unlock & Split Check -->
+    <section id="tab-ai" class="tab-content">
+      <div class="card">
+        <div class="section-title-row">
+          <h3>一线 AI 服务连通性、DNS 分流与锁区检测 (OpenAI / Claude / Gemini / Grok / Cursor 等)</h3>
+          <button class="btn btn-sm btn-secondary" onclick="runSingleModule('ai')">重新检测 AI 服务</button>
+        </div>
+        <div id="ai-summary-chips" class="bench-highlights"></div>
+        <div class="table-wrap mt-12">
+          <table>
+            <thead>
+              <tr>
+                <th>AI 平台 / 服务</th>
+                <th>域名</th>
+                <th>DNS 模式</th>
+                <th>出口地区 / POP</th>
+                <th>延迟</th>
+                <th>诊断状态</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-ai-services">
+              <tr><td colspan="7" class="empty-cell">请点击「一键全量诊断」或「重新检测 AI 服务」</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="ai-findings" class="findings-box mt-16"></div>
+      </div>
+    </section>
+
+    <!-- Tab 3: WebRTC & IPv6 Leak -->
+    <section id="tab-webrtc" class="tab-content">
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title-row">
+            <h3>浏览器原生 WebRTC (RTCPeerConnection)</h3>
+            <button class="btn btn-sm btn-secondary" onclick="runBrowserWebRTC()">重测浏览器 WebRTC</button>
+          </div>
+          <p class="muted small-desc">直接调用浏览器 ICE 收集框架，检测局域网 Host IP 与 STUN UDP 公网映射 IP (srflx)。</p>
+          <div id="browser-webrtc-verdict" class="mini-banner muted">等待探测...</div>
+          <div class="table-wrap mt-12">
+            <table>
+              <thead>
+                <tr>
+                  <th>候选类型</th>
+                  <th>发现 IP / mDNS</th>
+                  <th>归属地 / 运营商</th>
+                  <th>STUN 节点</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-browser-webrtc">
+                <tr><td colspan="4" class="empty-cell">等待触发</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-title-row">
+            <h3>系统底层 RFC 5389 UDP STUN 探测</h3>
+            <button class="btn btn-sm btn-secondary" onclick="runSingleModule('webrtc')">刷新系统 STUN</button>
+          </div>
+          <p class="muted small-desc">绕过浏览器限制，使用系统原生 UDP Socket 直接向海内外 STUN 发起绑定探测。</p>
+          <div id="sys-webrtc-verdict" class="mini-banner muted">等待探测...</div>
+          <div class="table-wrap mt-12">
+            <table>
+              <thead>
+                <tr>
+                  <th>STUN 服务器</th>
+                  <th>映射公网 IP:端口</th>
+                  <th>归属地 / 运营商</th>
+                  <th>延迟</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-sys-stun">
+                <tr><td colspan="4" class="empty-cell">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div id="webrtc-findings" class="findings-box mt-16"></div>
+    </section>
+
+    <!-- Tab 4: DNS Pollution & Encrypted DNS Benchmark -->
+    <section id="tab-pollute" class="tab-content">
+      <div class="card">
+        <div class="section-title-row">
+          <h3>DNS 污染 / 抢答投毒对比矩阵 (DoH 可信基准 vs 明文 UDP-53)</h3>
+          <button class="btn btn-sm btn-secondary" onclick="runSingleModule('pollute')">重新检测污染</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead id="thead-pollution">
+              <tr>
+                <th>探测域名</th>
+                <th>DoH 可信基准</th>
+                <th>系统默认</th>
+                <th>114DNS</th>
+                <th>阿里 AliDNS</th>
+                <th>8.8.8.8 (UDP)</th>
+                <th>1.1.1.1 (UDP)</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-pollution">
+              <tr><td colspan="7" class="empty-cell">暂无数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="pollution-findings" class="findings-box mt-16"></div>
+      </div>
+
+      <div class="card mt-16">
+        <div class="section-title-row">
+          <h3>公共与加密 DNS (UDP / DoT / DoH) 多协议测速榜</h3>
+          <button class="btn btn-sm btn-secondary" onclick="runSingleModule('bench')">重新测速</button>
+        </div>
+        <div id="bench-highlights" class="bench-highlights"></div>
+        <div class="table-wrap mt-12">
+          <table>
+            <thead>
+              <tr>
+                <th>DNS 服务商</th>
+                <th>协议</th>
+                <th>区域</th>
+                <th>平均延迟</th>
+                <th>延迟条形图</th>
+                <th>可用率</th>
+                <th>DNSSEC</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-bench">
+              <tr><td colspan="7" class="empty-cell">暂无数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: System Env & Custom Dig Lab -->
+    <section id="tab-env" class="tab-content">
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title-row">
+            <h3>本机系统 DNS 配置与 TUN / Fake-IP 状态</h3>
+            <button class="btn btn-sm btn-secondary" onclick="runSingleModule('env')">刷新环境</button>
+          </div>
+          <div id="env-details-box" class="env-details-box">
+            <div class="empty-cell">暂无环境数据</div>
+          </div>
+          <div id="env-findings" class="findings-box mt-16"></div>
+        </div>
+
+        <div class="card">
+          <div class="section-title-row">
+            <h3>自定义 DNS 报文探测实验室 (Dig Inspector)</h3>
+          </div>
+          <form id="dig-form" class="dig-form">
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label>目标域名 (Domain)</label>
+                <input type="text" id="dig-domain" value="www.google.com" placeholder="如 www.google.com 或 o-o.myaddr.l.google.com" required />
+              </div>
+              <div class="form-group">
+                <label>记录类型</label>
+                <select id="dig-qtype">
+                  <option value="A">A (IPv4)</option>
+                  <option value="AAAA">AAAA (IPv6)</option>
+                  <option value="HTTPS">HTTPS (Type 65)</option>
+                  <option value="TXT">TXT</option>
+                  <option value="CNAME">CNAME</option>
+                  <option value="NS">NS</option>
+                  <option value="SOA">SOA</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>传输协议</label>
+                <select id="dig-proto">
+                  <option value="udp">UDP (53)</option>
+                  <option value="tcp">TCP (53)</option>
+                  <option value="dot">DoT (TLS 853)</option>
+                  <option value="doh">DoH (HTTPS 443)</option>
+                  <option value="system">System Stub</option>
+                </select>
+              </div>
+              <div class="form-group flex-2">
+                <label>DNS 服务器 / DoH URL</label>
+                <input type="text" id="dig-server" value="223.5.5.5" list="dns-presets" />
+                <datalist id="dns-presets">
+                  <option value="223.5.5.5">阿里 AliDNS (223.5.5.5)</option>
+                  <option value="119.29.29.29">腾讯 DNSPod (119.29.29.29)</option>
+                  <option value="114.114.114.114">114DNS</option>
+                  <option value="1.1.1.1">Cloudflare (1.1.1.1)</option>
+                  <option value="8.8.8.8">Google (8.8.8.8)</option>
+                  <option value="https://dns.alidns.com/dns-query">阿里 DoH</option>
+                  <option value="https://cloudflare-dns.com/dns-query">Cloudflare DoH</option>
+                  <option value="https://dns.google/dns-query">Google DoH</option>
+                </datalist>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label>EDNS Client Subnet (可选 CIDR)</label>
+                <input type="text" id="dig-ecs" placeholder="例如 114.114.114.0/24 (留空则不发送)" />
+              </div>
+              <div class="form-group align-end">
+                <button type="submit" class="btn btn-primary full-width">发送探测报文</button>
+              </div>
+            </div>
+          </form>
+          <div id="dig-result-box" class="dig-result-box mt-16">
+            <div class="muted small-desc">支持测试原生 DNS 报文标志位 (AD/DO/RA)、EDNS0 ECS 响应及解析 IP 归属地。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
