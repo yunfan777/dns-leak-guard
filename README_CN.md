@@ -126,7 +126,23 @@ python3 dnscheck.py ui
 python3 dnscheck.py ui --app
 ```
 
-### 3. 可选：全局安装或使用 `make`
+### 3. AI Agent Skill 与独立 Prompt（支持 Antigravity / Claude Code / Codex / 任意大模型）
+
+本项目内置了开箱即用的 **Agent Skill**（英文默认，完整支持简体中文）与**可独立复制的 Prompt**，在 `dnscheck` 深度审计基础上补齐常规网络排查（延迟/丢包、路由追踪、TLS 握手、本机端口与原生命令降级）与各代理客户端修复速查手册：
+
+- **Agent Skill**：[`.agents/skills/network-dns-audit/SKILL.md`](./.agents/skills/network-dns-audit/SKILL.md) — 在本仓库内可被 Antigravity、Claude Code、Codex 等支持 `.agents/skills/` 规范的 Agent 自动发现。
+- **独立 Prompt**：[`prompts/network-dns-audit.md`](./prompts/network-dns-audit.md)（English）· [`prompts/network-dns-audit_zh.md`](./prompts/network-dns-audit_zh.md)（简体中文）
+- **配置与使用说明**：[`prompts/README.md`](./prompts/README.md) · [`prompts/README_CN.md`](./prompts/README_CN.md)
+
+如需在任意工作区全局调用该 Skill：
+
+```bash
+pip3 install --no-deps -e .
+mkdir -p ~/.gemini/config/skills
+ln -s "$(pwd)/.agents/skills/network-dns-audit" ~/.gemini/config/skills/network-dns-audit
+```
+
+### 4. 可选：全局安装或使用 `make`
 
 ```bash
 pip3 install --no-deps -e .
@@ -158,27 +174,31 @@ make test
 
 ```text
 .
-├── dnscheck.py                  # 可执行入口脚本
-├── pyproject.toml               # 零依赖打包配置 (dnscheck CLI)
-├── Makefile                     # 快捷命令封装
+├── .agents/skills/network-dns-audit/  # AI Agent Skill（SKILL.md、辅助脚本与中英修复手册）
+├── prompts/                           # 可独立复制的 Prompt 与使用指南（EN + ZH）
+├── dnscheck.py                        # 可执行入口脚本
+├── pyproject.toml                     # 零依赖打包配置 (dnscheck CLI)
+├── Makefile                           # 快捷命令封装
 ├── dnscheck/
-│   ├── __main__.py              # `python -m dnscheck` 模块入口
+│   ├── __main__.py                    # `python -m dnscheck` 模块入口
 │   ├── protocol/
-│   │   ├── dns_packet.py        # 原生 RFC 1035 / EDNS0 / ECS / Type-65 报文编解码
-│   │   ├── transports.py        # UDP / TCP / DoT (853) / DoH (443) / System 传输层
-│   │   ├── interactsh.py        # 零依赖 Interactsh OAST 客户端 (RSA-OAEP + AES-CTR/CFB)
-│   │   └── stun.py              # 原生 RFC 5389 STUN UDP 协议栈
+│   │   ├── dns_packet.py              # 原生 RFC 1035 / EDNS0 / ECS / Type-65 报文编解码
+│   │   ├── transports.py              # UDP / TCP / DoT (853) / DoH (443) / System 传输层
+│   │   ├── interactsh.py              # 零依赖 Interactsh OAST 客户端 (RSA-OAEP + AES-CTR/CFB)
+│   │   └── stun.py                    # 原生 RFC 5389 STUN UDP 协议栈
 │   ├── detectors/
-│   │   ├── dns_leak.py          # OAST 6 维通道归因 + 权威回显 + UDP-53 透明劫持审计
-│   │   ├── system_env.py        # 系统 DNS / 代理 / TUN / Fake-IP / ECS 环境诊断
-│   │   ├── split_route.py       # 国内外四维分流出口矩阵
-│   │   ├── ai_services.py       # 一线 AI 平台连通性与锁区检测
-│   │   ├── webrtc_ipv6.py       # STUN UDP 与 IPv6 双栈泄漏检测
-│   │   └── pollution_bench.py   # DNS 投毒比对与多协议测速
-│   ├── enricher/ip_intel.py     # IP 归属地 / ASN / Fake-IP 识别与批量增强
-│   ├── cli/                     # 命令行路由与 CJK 对齐 ANSI 渲染器
-│   └── web/                     # 127.0.0.1 本地 REST API 与单页可视化控制台
-└── tests/                       # 单元测试（含 OpenSSL 加解密互操作与 Mock OAST 测试）
+│   │   ├── dns_leak.py                # OAST 6 维通道归因 + 权威回显 + UDP-53 透明劫持审计
+│   │   ├── proxy_audit.py             # 本机代理配置与规则求值只读审计 (Surge / Mihomo)
+│   │   ├── claude_guard.py            # Claude 14 域名 + 34.8.0.0/16 一致性审计与规则导出
+│   │   ├── system_env.py              # 系统 DNS / 代理 / TUN / Fake-IP / ECS 环境诊断
+│   │   ├── split_route.py             # 国内外四维分流出口矩阵
+│   │   ├── ai_services.py             # 一线 AI 平台连通性与锁区检测
+│   │   ├── webrtc_ipv6.py             # STUN UDP 与 IPv6 双栈泄漏检测
+│   │   └── pollution_bench.py         # DNS 投毒比对与多协议测速
+│   ├── enricher/ip_intel.py           # IP 归属地 / ASN / Fake-IP 识别与批量增强
+│   ├── cli/                           # 命令行路由与 CJK 对齐 ANSI 渲染器
+│   └── web/                           # 127.0.0.1 本地 REST API 与单页可视化控制台
+└── tests/                             # 单元测试（含 OpenSSL 加解密互操作与 Mock OAST 测试）
 ```
 
 ---

@@ -126,7 +126,23 @@ python3 dnscheck.py ui
 python3 dnscheck.py ui --app
 ```
 
-### 3. Optional Installation & Shortcuts
+### 3. AI Agent Skill & Standalone Prompts (Antigravity / Claude Code / Codex / Any LLM)
+
+DNSGuard includes a ready-to-use **Agent Skill** (English default, with Simplified Chinese support) and **copy-pasteable standalone Prompts** that combine `dnscheck` deep audits with general OS network troubleshooting (latency, packet loss, traceroute, TLS handshake, local ports) and client-specific remediation playbooks:
+
+- **Agent Skill**: [`.agents/skills/network-dns-audit/SKILL.md`](./.agents/skills/network-dns-audit/SKILL.md) — auto-discovered inside this repo by Antigravity, Claude Code, Codex, and other `.agents/skills/`-compatible agents.
+- **Standalone Prompts**: [`prompts/network-dns-audit.md`](./prompts/network-dns-audit.md) (English) · [`prompts/network-dns-audit_zh.md`](./prompts/network-dns-audit_zh.md) (简体中文)
+- **Setup & Usage Guide**: [`prompts/README.md`](./prompts/README.md) · [`prompts/README_CN.md`](./prompts/README_CN.md)
+
+To use the Agent Skill globally across all your workspaces:
+
+```bash
+pip3 install --no-deps -e .
+mkdir -p ~/.gemini/config/skills
+ln -s "$(pwd)/.agents/skills/network-dns-audit" ~/.gemini/config/skills/network-dns-audit
+```
+
+### 4. Optional Installation & Shortcuts
 
 ```bash
 pip3 install --no-deps -e .
@@ -158,27 +174,31 @@ make test
 
 ```text
 .
-├── dnscheck.py                  # Standalone CLI executable entry point
-├── pyproject.toml               # Zero-dependency packaging metadata
-├── Makefile                     # Convenience targets
+├── .agents/skills/network-dns-audit/  # AI Agent Skill (SKILL.md, helper runner & EN/ZH playbooks)
+├── prompts/                           # Copy-paste standalone prompts & usage guides (EN + ZH)
+├── dnscheck.py                        # Standalone CLI executable entry point
+├── pyproject.toml                     # Zero-dependency packaging metadata
+├── Makefile                           # Convenience targets
 ├── dnscheck/
-│   ├── __main__.py              # `python -m dnscheck` entry point
+│   ├── __main__.py                    # `python -m dnscheck` entry point
 │   ├── protocol/
-│   │   ├── dns_packet.py        # Native RFC 1035 / EDNS0 / ECS / Type-65 codec
-│   │   ├── transports.py        # UDP / TCP / DoT (853) / DoH (443) / System transports
-│   │   ├── interactsh.py        # Zero-dependency Interactsh OAST client (RSA-OAEP + AES-CTR/CFB)
-│   │   └── stun.py              # Native RFC 5389 STUN UDP client
+│   │   ├── dns_packet.py              # Native RFC 1035 / EDNS0 / ECS / Type-65 codec
+│   │   ├── transports.py              # UDP / TCP / DoT (853) / DoH (443) / System transports
+│   │   ├── interactsh.py              # Zero-dependency Interactsh OAST client (RSA-OAEP + AES-CTR/CFB)
+│   │   └── stun.py                    # Native RFC 5389 STUN UDP client
 │   ├── detectors/
-│   │   ├── dns_leak.py          # OAST 6-vector attribution + echo + UDP-53 hijack audit
-│   │   ├── system_env.py        # OS DNS / proxy / TUN / Fake-IP / ECS diagnostics
-│   │   ├── split_route.py       # 4-way split-routing egress comparison
-│   │   ├── ai_services.py       # AI platform connectivity & region-lock checks
-│   │   ├── webrtc_ipv6.py       # STUN UDP & IPv6 leak detection
-│   │   └── pollution_bench.py   # DNS poisoning audit & encrypted DNS benchmarks
-│   ├── enricher/ip_intel.py     # IP geolocation / ASN / Fake-IP enrichment
-│   ├── cli/                     # CLI parser & CJK-aligned ANSI terminal renderer
-│   └── web/                     # Local 127.0.0.1 REST API & single-page dashboard
-└── tests/                       # Unit tests (including OpenSSL crypto interop & mock OAST)
+│   │   ├── dns_leak.py                # OAST 6-vector attribution + echo + UDP-53 hijack audit
+│   │   ├── proxy_audit.py             # Read-only Surge / Clash-Mihomo rule & DNS config auditor
+│   │   ├── claude_guard.py            # Claude 14-domain + 34.8.0.0/16 consistency guard & exporter
+│   │   ├── system_env.py              # OS DNS / proxy / TUN / Fake-IP / ECS diagnostics
+│   │   ├── split_route.py             # 4-way split-routing egress comparison
+│   │   ├── ai_services.py             # AI platform connectivity & region-lock checks
+│   │   ├── webrtc_ipv6.py             # STUN UDP & IPv6 leak detection
+│   │   └── pollution_bench.py         # DNS poisoning audit & encrypted DNS benchmarks
+│   ├── enricher/ip_intel.py           # IP geolocation / ASN / Fake-IP enrichment
+│   ├── cli/                           # CLI parser & CJK-aligned ANSI terminal renderer
+│   └── web/                           # Local 127.0.0.1 REST API & single-page dashboard
+└── tests/                             # Unit tests (including OpenSSL crypto interop & mock OAST)
 ```
 
 ---
